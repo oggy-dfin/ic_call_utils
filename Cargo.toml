@@ -1,0 +1,20 @@
+[workspace]
+members = [
+    "call_chaos/call_chaos",
+    "call_chaos/tests/canister",
+    "call_chaos/tests/pocket_ic_test",
+    "safe_upgrade/safe_upgrades",
+    "safe_upgrade/tests/target_canister",
+    "safe_upgrade/tests/upgrader_canister",
+    "retry/retry",
+    "retry/tests/canister",
+    "retry/tests/pocket_ic_test",
+    "pocket_ic_utils", "safe_upgrade/tests/pocket_ic_test",
+]
+resolver = "2"
+
+[workspace.dependencies]
+ic-cdk = "0.18.0"
+candid = "0.10.13"
+ic-management-canister-types = "0.3.0"
+serde_bytes = "0.11.15"

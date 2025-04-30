@@ -1,0 +1,19 @@
+[package]
+name = "ic-safe-upgrades"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+use_call_chaos = ["ic-call-retry/use_call_chaos", "dep:ic-call-chaos"]
+
+[dependencies]
+candid = { workspace = true }
+ic-cdk = { workspace = true }
+ic-call-chaos = { path = "../../call_chaos/call_chaos", optional = true }
+ic-call-retry = { path = "../../retry/retry" }
+ic-management-canister-types = { workspace = true }
+serde_bytes = { workspace = true }
+sha2 = "0.10.8"
+
+[lib]
+crate-type = ["rlib"]
