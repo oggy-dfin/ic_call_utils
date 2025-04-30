@@ -136,6 +136,13 @@ pub struct WithProbability {
 }
 
 impl WithProbability {
+    /// Create a new `WithProbability` policy with the given probability and seed.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `probability` - A float between 0 and 1 representing the probability of allowing calls.
+    /// * `seed` - A u64 seed for the random number generator.
+    /// * `silently_perform_bounded_wait_calls` - A boolean indicating whether to silently perform bounded-wait calls even if they are reported as rejected (with a `SysUnknown` reject code).
     pub fn new(probability: f32, seed: u64, silently_perform_bounded_wait_calls: bool) -> Self {
         assert!(probability >= 0.0, "Probability should be >= 0");
         assert!(probability <= 1.0, "Probability should be <= 1");
@@ -199,9 +206,10 @@ pub enum CallType {
     UnboundedWait,
 }
 
-// A wrapper around `ic_cdk::call::Call` that enables "chaos testing" by failing calls
-// according to a policy set by `set_policy`. It's implemented as a drop-in replacement
-// for `ic_cdk::call::Call`, so it can be used in lieu of it by simple changing imports.
+/// A wrapper around `ic_cdk::call::Call` that enables "chaos testing" by failing calls
+/// according to a policy set by `set_policy`. It's implemented as a drop-in replacement
+/// for `ic_cdk::call::Call`, so it can be used in lieu of it by simple changing imports.
+/// See the documentation on `ic_cdk::call::Call` for more details on the individual methods.
 #[derive(Clone, Debug)]
 pub struct Call<'m, 'a> {
     pub canister_id: Principal,
@@ -287,7 +295,8 @@ impl Call<'_, '_> {
 
 enum CallFutureState<'m, 'a> {
     // The call has been rejected, however, we're waiting for a dummy management canister call
-    // to finish, in order to simulate the passage of time.
+    // to finish, in order to simulate the passage of time that would happen when an asynchronous
+    // reject happens in reality.
     Rejected(CallFailed),
     // The call has been allowed, and we're waiting for the result.
     Allowed(CdkCallFuture<'m, 'a>),
