@@ -1,0 +1,18 @@
+[package]
+name = "test-upgrade-upgrader-canister"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ic-cdk = { workspace = true }
+candid = { workspace = true }
+ic-call-chaos = { path = "../../../call_chaos/call_chaos" }
+ic-safe-upgrades = { path = "../../safe_upgrades", features = [
+    "use_call_chaos",
+] }
+ic-call-retry = { path = "../../../retry/retry", features = [
+    "use_call_chaos",
+] }

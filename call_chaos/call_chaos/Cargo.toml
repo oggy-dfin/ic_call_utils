@@ -1,0 +1,12 @@
+[package]
+name = "ic-call-chaos"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+futures = "0.3.25"
+lazy_static = "1.5.0"
+ic-cdk = { workspace = true }
+candid = { workspace = true }
+rand_chacha = "0.9"
+rand = { version = "0.9", default-features = false, features = ["std"] }
