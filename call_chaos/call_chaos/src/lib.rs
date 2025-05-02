@@ -39,9 +39,11 @@ use std::task::Poll;
 /// A trait that defines a policy for allowing or rejecting calls.
 pub trait Policy: Send + Sync {
     /// Whether to allow a call.
+    ///
     /// If the call is allowed, the ic_cdk call will be executed. This still doesn't mean that the
     /// call will succeed, as it might actually fail for an arbitrary reason (e.g., not having enough cycles,
     /// system being under load, etc).
+    ///
     /// If the call is not allowed, the ic_cdk call will not be executed. The policy can, however,
     /// execute the call under the hood and still return an error. For example, for bounded-wait
     /// calls, you may return `RejectCode::SysUnknown` and still issue the call, simulating a
@@ -49,6 +51,7 @@ pub trait Policy: Send + Sync {
     /// to actually delay producing the rejection, by calling a no-op on the management canister.
     /// This is done in order to simulate the time it would take for the call to be rejected in
     /// production.
+    ///
     /// Note that this takes a mutable reference to the policy, so it can be used to maintain state
     /// if needed (e.g., drop the first `N` calls, and then allow all calls to go through)
     fn allow(&mut self, call: &Call) -> Result<(), CallFailed>;
