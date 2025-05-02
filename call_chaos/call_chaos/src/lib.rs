@@ -57,14 +57,19 @@ pub trait Policy: Send + Sync {
     fn allow(&mut self, call: &Call) -> Result<(), CallFailed>;
 
     /// Whether to allow a one-way call.
+    ///
     /// If the call is allowed, the ic_cdk call will be executed. This still doesn't mean that the
     /// call will succeed, as it might fail for an arbitrary reason (e.g., not having enough cycles,
     /// system being under load, etc).
+    ///
     /// If the call is not allowed, the ic_cdk call will not be executed. To allow simulating the
     /// call failing silently, the error is returned as an `Option<OnewayError>`. An error of
     /// `None` means that the call shouldn't be executed but no error should be returned either. An
     /// error of `Some(OnewayError)` means that the call shouldn't be executed and the error should
     /// be returned to the caller.
+    ///
+    /// Note that this takes a mutable reference to the policy, so it can be used to maintain state
+    /// if needed (e.g., drop the first `N` calls, and then allow all calls to go through)
     fn allow_oneway(&mut self, call: &Call) -> Result<(), Option<OnewayError>>;
 }
 

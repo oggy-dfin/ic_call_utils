@@ -2,7 +2,7 @@ use candid::Principal;
 #[cfg(feature = "use_call_chaos")]
 use ic_call_chaos::Call;
 use ic_call_retry::{
-    retry_idempotent_call, retry_nonidempotent_call, unless_out_of_time_or_stopping, Deadline,
+    call_idempotent_method_with_retry, call_nonidempotent_method_with_retry, when_out_of_time_or_stopping, Deadline,
     ErrorCause, RetryError,
 };
 #[cfg(not(feature = "use_call_chaos"))]
@@ -184,7 +184,7 @@ where
     let args = StopCanisterArgs {
         canister_id: target_id,
     };
-    Ok(retry_idempotent_call(
+    Ok(call_idempotent_method_with_retry(
         Call::bounded_wait(Principal::management_canister(), "stop_canister")
             .with_arg(&args),
         should_retry,
@@ -202,7 +202,7 @@ where
     let args = StartCanisterArgs {
         canister_id: target_id,
     };
-    Ok(retry_idempotent_call(
+    Ok(call_idempotent_method_with_retry(
         Call::bounded_wait(Principal::management_canister(), "start_canister").with_arg(&args),
         should_retry,
     )
@@ -225,7 +225,7 @@ where
         num_requested_changes,
     };
 
-    Ok(retry_idempotent_call(
+    Ok(call_idempotent_method_with_retry(
         Call::bounded_wait(Principal::management_canister(), "canister_info").with_arg(&arg),
         should_retry,
     )
@@ -253,7 +253,7 @@ where
         arg: arg.to_vec(),
     };
 
-    Ok(retry_nonidempotent_call(
+    Ok(call_nonidempotent_method_with_retry(
         Call::bounded_wait(Principal::management_canister(), "install_code")
             .with_arg(&install_args),
         should_retry,
@@ -275,8 +275,8 @@ async fn upload_chunks(
         },
     );
 
-    let mut retry_fn = unless_out_of_time_or_stopping(deadline);
-    let _: () = retry_idempotent_call(call, &mut retry_fn)
+    let mut retry_fn = when_out_of_time_or_stopping(deadline);
+    let _: () = call_idempotent_method_with_retry(call, &mut retry_fn)
         .await?
         .candid()
         .unwrap();
@@ -289,8 +289,8 @@ async fn upload_chunks(
 
         let call = Call::bounded_wait(Principal::management_canister(), "upload_chunk")
             .with_arg(&chunk_install_args);
-        let mut retry_fn = unless_out_of_time_or_stopping(deadline);
-        let _: () = retry_idempotent_call(call, &mut retry_fn)
+        let mut retry_fn = when_out_of_time_or_stopping(deadline);
+        let _: () = call_idempotent_method_with_retry(call, &mut retry_fn)
             .await?
             .candid()
             .unwrap();
@@ -324,6 +324,6 @@ where
 
     let install_call = Call::bounded_wait(Principal::management_canister(), "install_chunked_code")
         .with_arg(&install_args);
-    let res = retry_nonidempotent_call(install_call, should_retry).await?;
+    let res = call_nonidempotent_method_with_retry(install_call, should_retry).await?;
     Ok(res.candid().unwrap())
 }

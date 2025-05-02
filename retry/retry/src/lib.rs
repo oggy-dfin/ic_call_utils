@@ -4,6 +4,10 @@
 //! retry policies. It supports both idempotent and non-idempotent calls, though you must
 //! decide yourself which calls are idempotent and which are not.
 //!
+//! Note that retries are always executed immediately, there is no backoff strategy. This is
+//! because the Internet Computer doesn't (yet?) support "pausing" a call context. Retries
+//! with backoffs would have to be implemented as background tasks.
+//!
 //! # Features
 //!
 //! - Support for both idempotent and non-idempotent calls
@@ -13,7 +17,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use ic_call_retry::{retry_idempotent_call, unless_out_of_time_or_stopping, Deadline};
+//! use ic_call_retry::{call_idempotent_method_with_retry, when_out_of_time_or_stopping, Deadline};
 //! use ic_cdk::api::time;
 //! use ic_cdk::call::Call;
 //!
@@ -29,11 +33,11 @@
 //!     // Retry the call until either:
 //!     // 1. The call succeeds
 //!     // 2. The deadline is reached
-//!     // 3. The caller canister starts stopping
+//!     // 3. The caller canister enters the stopping state
 //!     // 4. A non-retryable error occurs
-//!     retry_idempotent_call(
+//!     call_idempotent_method_with_retry(
 //!         call,
-//!         &mut unless_out_of_time_or_stopping(&deadline),
+//!         &mut when_out_of_time_or_stopping(&deadline),
 //!     )
 //!     .await
 //!     .map_err(|e| format!("Call failed: {:?}", e))?;
@@ -65,9 +69,13 @@ use ic_cdk::call::{CallErrorExt, CallFailed, Response};
 /// - A combination of time and stopping state
 #[derive(Debug, Clone)]
 pub enum Deadline {
-    /// Retry until the caller canister starts stopping
+    /// Retry until the caller canister enters the stopping state.
+    ///
+    /// Note that, since there is no backoff, this caries a risk of burning
+    /// the caller's cycles, potentially quickly, until the caller is stopped.
+    /// Upstream callers may also be blocked until the caller is stopped.
     Stopping,
-    /// Retry until either the specified time is reached or the caller canister starts stopping
+    /// Retry until either the specified time is reached or the caller canister enters the stopping state
     TimeOrStopping(u64),
 }
 
@@ -92,7 +100,7 @@ pub enum RetryError {
     StatusUnknown(ErrorCause),
 }
 
-/// Retries an idempotent call until the retry condition is no longer met.
+/// Makes and, in case of failure, retries an idempotent call until instructed otherwise
 ///
 /// This function is suitable for calls that can be safely retried without side effects.
 /// It will retry the call until either:
@@ -102,16 +110,16 @@ pub enum RetryError {
 ///
 /// # Arguments
 ///
-/// * `call` - The call to retry
-/// * `should_retry` - A function that determines whether to continue retrying
+/// * `call` - The (idempotent) call to execute and retry if needed
+/// * `stop_trying` - A function that determines when to stop (re)trying the call
 ///
 /// # Returns
 ///
 /// * `Ok(Response)` if the call succeeds
 /// * `Err(RetryError)` if the call fails and cannot be retried
-pub async fn retry_idempotent_call<'a, 'm, P>(
+pub async fn call_idempotent_method_with_retry<'a, 'm, P>(
     call: Call<'a, 'm>,
-    should_retry: &mut P,
+    stop_trying: &mut P,
 ) -> Result<Response, RetryError>
 where
     P: FnMut() -> bool,
@@ -119,7 +127,7 @@ where
     let mut no_unknown_results = true;
 
     loop {
-        if !should_retry() {
+        if stop_trying() {
             return Err(if no_unknown_results {
                 RetryError::CallFailed(ErrorCause::GaveUpRetrying)
             } else {
@@ -146,7 +154,7 @@ where
     }
 }
 
-/// Retries a non-idempotent call until the retry condition is no longer met.
+/// Makes and, in case of failure, retries a non-idempotent call until instructed otherwise
 ///
 /// This function is suitable for calls that may have side effects and should be
 /// retried with caution. It will retry the call until either:
@@ -158,21 +166,21 @@ where
 /// # Arguments
 ///
 /// * `call` - The call to retry
-/// * `should_retry` - A function that determines whether to continue retrying
+/// * `stop_trying` - A function that determines whether to stop (re)trying the call
 ///
 /// # Returns
 ///
 /// * `Ok(Response)` if the call succeeds
 /// * `Err(RetryError)` if the call fails and cannot be retried
-pub async fn retry_nonidempotent_call<'m, 'a, P>(
+pub async fn call_nonidempotent_method_with_retry<'m, 'a, P>(
     call: Call<'m, 'a>,
-    should_retry: &mut P,
+    stop_trying: &mut P,
 ) -> Result<Response, RetryError>
 where
     P: FnMut() -> bool,
 {
     loop {
-        if !should_retry() {
+        if stop_trying() {
             return Err(RetryError::CallFailed(ErrorCause::GaveUpRetrying));
         }
 
@@ -192,7 +200,7 @@ where
     }
 }
 
-/// Returns a function that determines whether to continue retrying based on the deadline.
+/// Returns a function that determines whether to stop retrying based on the deadline.
 ///
 /// This function returns a closure that can be used directly with the retry functions.
 ///
@@ -203,12 +211,12 @@ where
 /// # Returns
 ///
 /// A closure that returns `true` if we should continue retrying
-pub fn unless_out_of_time_or_stopping(deadline: &Deadline) -> impl FnMut() -> bool {
+pub fn when_out_of_time_or_stopping(deadline: &Deadline) -> impl FnMut() -> bool {
     let deadline = deadline.clone();
     move || match &deadline {
-        Deadline::Stopping => canister_status() != CanisterStatusCode::Stopping,
+        Deadline::Stopping => canister_status() == CanisterStatusCode::Stopping,
         Deadline::TimeOrStopping(dl) => {
-            canister_status() != CanisterStatusCode::Stopping && time() < *dl
+            canister_status() == CanisterStatusCode::Stopping || time() >= *dl
         }
     }
 }
@@ -224,10 +232,10 @@ pub fn unless_out_of_time_or_stopping(deadline: &Deadline) -> impl FnMut() -> bo
 /// # Returns
 ///
 /// A closure that returns `true` if we should continue retrying
-pub fn max_retries(max_retries: u32) -> impl FnMut() -> bool {
+pub fn when_max_retries_reached(max_retries: u32) -> impl FnMut() -> bool {
     let mut retries = 0;
     move || {
         retries += 1;
-        retries <= max_retries
+        retries > max_retries
     }
 }

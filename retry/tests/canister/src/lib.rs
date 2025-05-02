@@ -1,5 +1,5 @@
 use ic_call_chaos::{set_policy as call_chaos_set_policy, Call};
-use ic_call_retry::{retry_idempotent_call, unless_out_of_time_or_stopping, Deadline};
+use ic_call_retry::{call_idempotent_method_with_retry, when_out_of_time_or_stopping, Deadline};
 use ic_cdk::api::canister_self;
 use ic_cdk::call::{CallFailed, CallPerformFailed, CallRejected, OnewayError};
 use ic_cdk::{query, update};
@@ -49,9 +49,9 @@ async fn call_idempotent(id: u64, deadline: u64, use_unbounded_wait: bool) -> Re
     }
     .with_arg(&id);
 
-    let res = retry_idempotent_call(
+    let res = call_idempotent_method_with_retry(
         call,
-        &mut unless_out_of_time_or_stopping(&Deadline::TimeOrStopping(deadline)),
+        &mut when_out_of_time_or_stopping(&Deadline::TimeOrStopping(deadline)),
     )
     .await
     .map(|resp| {

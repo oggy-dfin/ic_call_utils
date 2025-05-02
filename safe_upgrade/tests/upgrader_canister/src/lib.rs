@@ -1,7 +1,7 @@
 use candid::Principal;
 use ic_cdk::call::{CallFailed, CallRejected, OnewayError};
 use ic_call_chaos::{set_policy as cc_set_policy, Call, Policy};
-use ic_call_retry::{unless_out_of_time_or_stopping, Deadline};
+use ic_call_retry::{when_out_of_time_or_stopping, Deadline};
 use ic_cdk::update;
 use ic_safe_upgrades::{upgrade_canister, WasmModule, UpgradeStage};
 
@@ -15,7 +15,7 @@ pub async fn try_upgrading_target(
         target_canister,
         WasmModule::Bytes(new_wasm),
         vec![],
-        &mut unless_out_of_time_or_stopping(&Deadline::TimeOrStopping(deadline)),
+        &mut when_out_of_time_or_stopping(&Deadline::TimeOrStopping(deadline)),
     )
     .await
     .map_err(|e| format!("Failed to upgrade canister: {:?}", e))
