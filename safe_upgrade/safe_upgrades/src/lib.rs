@@ -1,20 +1,24 @@
 use candid::Principal;
-#[cfg(feature = "use_call_chaos")]
-use ic_call_chaos::Call;
 use ic_call_retry::{
-    call_idempotent_method_with_retry, call_nonidempotent_method_with_retry, when_out_of_time_or_stopping, Deadline,
-    ErrorCause, RetryError,
+    call_idempotent_method_with_retry, call_nonidempotent_method_with_retry,
+    when_out_of_time_or_stopping, Deadline, ErrorCause, RetryError,
 };
-#[cfg(not(feature = "use_call_chaos"))]
-use ic_cdk::call::Call;
+use ic_cdk::api::canister_self;
 use ic_cdk::call::CallErrorExt;
 use ic_cdk::management_canister::InstallChunkedCodeArgs;
 use ic_cdk::management_canister::{
     CanisterInfoArgs, CanisterInfoResult, CanisterInstallMode, ChunkHash, ClearChunkStoreArgs,
     InstallCodeArgs, UploadChunkArgs,
 };
-use ic_management_canister_types::{ChangeDetails, StartCanisterArgs, StopCanisterArgs};
+use ic_management_canister_types::{
+    ChangeDetails, ChangeOrigin, StartCanisterArgs, StopCanisterArgs,
+};
 use sha2::{Digest, Sha256};
+
+#[cfg(feature = "use_call_chaos")]
+use ic_call_chaos::Call;
+#[cfg(not(feature = "use_call_chaos"))]
+use ic_cdk::call::Call;
 
 /// Represents a canister's principal ID on the IC.
 pub type CanisterId = Principal;
@@ -64,6 +68,57 @@ pub enum WasmModule {
     ChunkedModule(ChunkedModule),
 }
 
+enum VersionChangeCheck {
+    /// The version hasn't changed. The upgrade failed and can be retried.
+    NoChange,
+    /// The version has changed in the expected way. The upgrade succeeded.
+    UpgradeSucceeded,
+    /// A concurrent change was detected. The upgrade shouldn't be retried.
+    ConcurrentChangeDetected,
+}
+
+async fn version_change_check(
+    target_id: CanisterId,
+    wasm_module: &WasmModule,
+    old_version: u64,
+    should_retry: &mut impl FnMut() -> bool,
+) -> Result<VersionChangeCheck, RetryError> {
+    let (new_version, mut recent_changes) =
+        best_effort_canister_info(target_id, Some(1), should_retry)
+            .await
+            .map(|info| (info.total_num_changes, info.recent_changes))?;
+    let last_change = if let Some(change) = recent_changes.pop() {
+        change
+    } else {
+        // We asked for one recent change, and there really should be at least one,
+        // since we're in the process of upgrading the canister. So there not being
+        // a change should be unreachable, but possibly some very weird concurrent
+        // changes are going on, so we can report that.
+        return Ok(VersionChangeCheck::ConcurrentChangeDetected);
+    };
+    match (
+        new_version - old_version,
+        last_change.details,
+        last_change.origin,
+    ) {
+        (0, _, _) => Ok(VersionChangeCheck::NoChange),
+        (1, ChangeDetails::CodeDeployment(dep), ChangeOrigin::FromCanister(rec))
+            if rec.canister_id == canister_self() =>
+        {
+            let expected_hash: Vec<u8> = match wasm_module {
+                WasmModule::Bytes(ref wasm_bytes) => Sha256::digest(wasm_bytes).to_vec(),
+                WasmModule::ChunkedModule(ref chunked) => chunked.wasm_module_hash.clone(),
+            };
+            if dep.module_hash != expected_hash {
+                Ok(VersionChangeCheck::ConcurrentChangeDetected)
+            } else {
+                Ok(VersionChangeCheck::UpgradeSucceeded)
+            }
+        }
+        (_, _, _) => Ok(VersionChangeCheck::ConcurrentChangeDetected),
+    }
+}
+
 /// Safely upgrade a canister to a new version, without blocking the caller from
 /// being upgraded itself.
 ///
@@ -99,7 +154,12 @@ where
     P: FnMut() -> bool,
 {
     // Converts a `BestEffortError` into an `UpgradeError` at a given stage.
-    let add_stage = |stage: UpgradeStage| move |error: RetryError| UpgradeError { stage, reason: UpgradeErrorReason::RetryError(error) };
+    let add_stage = |stage: UpgradeStage| {
+        move |error: RetryError| UpgradeError {
+            stage,
+            reason: UpgradeErrorReason::RetryError(error),
+        }
+    };
 
     // 1) Stop the canister (best-effort).
     best_effort_stop(target_id, should_retry)
@@ -116,7 +176,6 @@ where
     // here if we don't know what happened, since installation isn't idempotent. Instead, use the
     // version number to determine if the upgrade went through.
     loop {
-
         let install_result = match wasm_module {
             WasmModule::Bytes(ref wasm_bytes) => {
                 best_effort_install_single_chunk(target_id, wasm_bytes, &arg, should_retry).await
@@ -134,41 +193,32 @@ where
             Err(RetryError::StatusUnknown(ErrorCause::CallFailed(rejection)))
                 if !rejection.is_clean_reject() =>
             {
-                let (new_version, mut recent_changes) = best_effort_canister_info(target_id, Some(1), should_retry)
-                    .await
-                    .map(|info| (info.total_num_changes, info.recent_changes))
-                    .map_err(add_stage(UpgradeStage::Installing))?;
-                if new_version <= version {
-                    ic_cdk::println!("Failed to upgrade {:?} and the version hasn't moved, retrying", target_id);
-                    continue;
-                } else {
-                    if new_version != version + 1 || recent_changes.len() != 1 {
+                let version_check_result =
+                    version_change_check(target_id, &wasm_module, version, should_retry)
+                        .await
+                        .map_err(add_stage(UpgradeStage::Installing))?;
+
+                match version_check_result {
+                    VersionChangeCheck::NoChange => {
+                        ic_cdk::println!(
+                            "Failed to upgrade {:?} and the version hasn't moved, retrying",
+                            target_id
+                        );
+                        continue;
+                    }
+                    VersionChangeCheck::UpgradeSucceeded => {
+                        break;
+                    }
+                    VersionChangeCheck::ConcurrentChangeDetected => {
                         return Err(UpgradeError {
                             stage: UpgradeStage::Installing,
                             reason: UpgradeErrorReason::ConcurrentChangeDetected,
                         });
                     }
-                    if let Some(change) = recent_changes.pop() {
-                        if let ChangeDetails::CodeDeployment(dep) = change.details {
-                            let expected_hash: Vec<u8> = match wasm_module {
-                                WasmModule::Bytes(ref wasm_bytes) => Sha256::digest(wasm_bytes).to_vec(),
-                                WasmModule::ChunkedModule(ref chunked) => chunked.wasm_module_hash.clone(),
-                            };
-                            if dep.module_hash != expected_hash {
-                                return Err(UpgradeError {
-                                    stage: UpgradeStage::Installing,
-                                    reason: UpgradeErrorReason::ConcurrentChangeDetected,
-                                });
-                            }
-                        }
-                    }
-                    break;
                 }
             }
-            Err(error) => {
-                return Err(add_stage(UpgradeStage::Installing)(error))
-            }
-        };
+            Err(error) => return Err(add_stage(UpgradeStage::Installing)(error)),
+        }
     }
 
     best_effort_start(target_id, should_retry)
@@ -185,8 +235,7 @@ where
         canister_id: target_id,
     };
     Ok(call_idempotent_method_with_retry(
-        Call::bounded_wait(Principal::management_canister(), "stop_canister")
-            .with_arg(&args),
+        Call::bounded_wait(Principal::management_canister(), "stop_canister").with_arg(&args),
         should_retry,
     )
     .await?
