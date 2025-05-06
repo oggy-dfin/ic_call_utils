@@ -1,0 +1,49 @@
+name: Rust CI
+
+# Controls when the workflow will run
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always # Ensures colored output from cargo
+
+jobs:
+  test:
+    name: Run Cargo Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy, rustfmt # Optional: install additional components
+          target: wasm32-unknown-unknown
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        # This action helps cache ~/.cargo/registry, ~/.cargo/git, and target directories.
+
+      - name: Run tests for the safe upgrade library
+        run: cargo test -p safe-upgrades-pocket-ic-test --verbose
+
+      - name: Run tests for the retry library
+        run: cargo test -p retry-pocket-ic-test --verbose
+
+      - name: Run tests for the call chaos library
+        run: cargo test -p call-chaos-pocket-ic-test --verbose
+
+      # Optional: Run clippy for linting (if clippy component was installed)
+      - name: Run Clippy
+        if: steps.toolchain.outputs.components_installed && contains(steps.toolchain.outputs.components_installed, 'clippy')
+        run: cargo clippy --workspace -- -D warnings # Fails on warnings
+
+      # Optional: Check formatting (if rustfmt component was installed)
+      - name: Check Formatting
+        if: steps.toolchain.outputs.components_installed && contains(steps.toolchain.outputs.components_installed, 'rustfmt')
+        run: cargo fmt --all -- --check # Fails if code is not formatted
