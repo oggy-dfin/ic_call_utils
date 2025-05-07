@@ -2,6 +2,10 @@
 name = "ic-safe-upgrades"
 version = "0.1.0"
 edition = "2021"
+authors = ["Ognjen Maric <ognjen.maric@dfinity.org>"]
+description = "Safe upgrades of Internet Computer canisters controlled by other canisters"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/oggy-dfin/ic_call_utils"
 
 [features]
 use_call_chaos = ["ic-call-retry/use_call_chaos", "dep:ic-call-chaos"]
