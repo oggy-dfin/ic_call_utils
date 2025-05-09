@@ -1,5 +1,4 @@
 # These settings apply across the workspace
-[workspace]
 consolidate-commits = true
 tag-name = "v{{version}}"
 tag-message = "Release {{version}}"
