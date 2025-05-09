@@ -12,4 +12,4 @@ use_call_chaos = ["dep:ic-call-chaos"]
 
 [dependencies]
 ic-cdk = { workspace = true }
-ic-call-chaos = { path = "../../call_chaos/call_chaos", optional = true }
+ic-call-chaos = { version = "0.1.0", path = "../../call_chaos/call_chaos", optional = true }
