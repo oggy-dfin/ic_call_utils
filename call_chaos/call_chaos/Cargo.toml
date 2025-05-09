@@ -2,6 +2,10 @@
 name = "ic-call-chaos"
 version = "0.1.0"
 edition = "2021"
+authors = ["Ognjen Maric <ognjen.maric@dfinity.org>"]
+description = "Chaos monkey library for Internet Computer calls"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/oggy-dfin/ic_call_utils"
 
 [dependencies]
 futures = "0.3.25"
