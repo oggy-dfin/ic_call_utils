@@ -81,10 +81,10 @@ async fn version_change_check(
     target_id: CanisterId,
     wasm_module: &WasmModule,
     old_version: u64,
-    should_retry: &mut impl FnMut() -> bool,
+    stop_trying: &mut impl FnMut() -> bool,
 ) -> Result<VersionChangeCheck, RetryError> {
     let (new_version, mut recent_changes) =
-        best_effort_canister_info(target_id, Some(1), should_retry)
+        bounded_wait_canister_info(target_id, Some(1), stop_trying)
             .await
             .map(|info| (info.total_num_changes, info.recent_changes))?;
     let last_change = if let Some(change) = recent_changes.pop() {
@@ -123,22 +123,30 @@ async fn version_change_check(
 /// being upgraded itself.
 ///
 /// Stops, installs, and then restarts the target canister.
-/// Uses best-effort responses under the hood, ensuring that the caller isn't blocked
+/// Uses bounded-wait calls under the hood, ensuring that the caller isn't blocked
 /// from upgrading itself due to open call contexts.
-/// It retries any failed best-effort response calls until the specified
-/// timeout is reached or the caller canister starts stopping.
-/// In corner cases, it may be unknown whether the upgrade
-/// succeeded (as indicated by the `StatusUnknown` return variant).
+/// It retries any failed calls until the `stop_trying` function returns true.
+/// See the `ic-call-retry` crate for sample functions.
+///
+/// In corner cases, it may be unknown whether the upgrade succeeded (as indicated by the
+/// `StatusUnknown` return variant).
+///
+/// Note that this function cannot protect against concurrent upgrades of the target canister.
+/// While it can detect concurrent updates in some cases (and return an error), the detection
+/// is not bulletproof. It's the caller's responsibility to ensure that they are the sole
+/// initiator of target canister upgrades, and that this function is not called multiple times in
+/// parallel.
 ///
 /// # Procedure
 ///
-/// 1. **Stop** the canister C via a best-effort call (`SysUnknown` => retry).
+/// 1. **Stop** the canister C via a bounded-wait call (`SysUnknown` => retry).
 ///    - Because `stop_canister` is idempotent, we can safely retry until definite success.
-/// 2. **Obtain** the current version (`canister_info`) to record the old WASM hash.
+/// 2. **Obtain** the current version (`canister_info`) to record the old WASM hash and canister
+///    version.
 /// 3. **Upgrade** the canister. If `SysUnknown` is returned, call `canister_info` again:
 ///    - If the canister's version changed by 1 and the hash is the expected one, we know the upgrade went through.
 ///    - If not, we retry or eventually give up as `StatusUnknown`.
-/// 4. **Start** the canister again, also with best-effort calls.
+/// 4. **Start** the canister again, also with bounded-wait calls.
 ///
 /// # Returns
 /// * `Ok(())` if we can confirm a successful upgrade.
@@ -148,7 +156,7 @@ pub async fn upgrade_canister<P>(
     target_id: CanisterId,
     wasm_module: WasmModule,
     arg: Vec<u8>,
-    should_retry: &mut P,
+    stop_trying: &mut P,
 ) -> Result<(), UpgradeError>
 where
     P: FnMut() -> bool,
@@ -161,13 +169,13 @@ where
         }
     };
 
-    // 1) Stop the canister (best-effort).
-    best_effort_stop(target_id, should_retry)
+    // 1) Stop the canister (bounded-wait).
+    bounded_wait_stop(target_id, stop_trying)
         .await
         .map_err(add_stage(UpgradeStage::Stopping))?;
 
     // 2) Query the current canister version for reference.
-    let version = best_effort_canister_info(target_id, None, should_retry)
+    let version = bounded_wait_canister_info(target_id, None, stop_trying)
         .await
         .map(|info| info.total_num_changes)
         .map_err(add_stage(UpgradeStage::ObtainingInfo))?;
@@ -178,10 +186,10 @@ where
     loop {
         let install_result = match wasm_module {
             WasmModule::Bytes(ref wasm_bytes) => {
-                best_effort_install_single_chunk(target_id, wasm_bytes, &arg, should_retry).await
+                bounded_wait_install_single_chunk(target_id, wasm_bytes, &arg, stop_trying).await
             }
             WasmModule::ChunkedModule(ref chunked) => {
-                best_effort_install_chunked(target_id, chunked, &arg, should_retry).await
+                bounded_wait_install_chunked(target_id, chunked, &arg, stop_trying).await
             }
         };
 
@@ -194,7 +202,7 @@ where
                 if !rejection.is_clean_reject() =>
             {
                 let version_check_result =
-                    version_change_check(target_id, &wasm_module, version, should_retry)
+                    version_change_check(target_id, &wasm_module, version, stop_trying)
                         .await
                         .map_err(add_stage(UpgradeStage::Installing))?;
 
@@ -221,13 +229,13 @@ where
         }
     }
 
-    best_effort_start(target_id, should_retry)
+    bounded_wait_start(target_id, stop_trying)
         .await
         .map_err(add_stage(UpgradeStage::Starting))
 }
 
 /// Stop a canister with best-effort calls until success or timeout.
-async fn best_effort_stop<P>(target_id: Principal, should_retry: &mut P) -> Result<(), RetryError>
+async fn bounded_wait_stop<P>(target_id: Principal, stop_trying: &mut P) -> Result<(), RetryError>
 where
     P: FnMut() -> bool,
 {
@@ -236,7 +244,7 @@ where
     };
     Ok(call_idempotent_method_with_retry(
         Call::bounded_wait(Principal::management_canister(), "stop_canister").with_arg(&args),
-        should_retry,
+        stop_trying,
     )
     .await?
     .candid()
@@ -244,7 +252,7 @@ where
 }
 
 /// Start a canister with best-effort calls until success or timeout.
-async fn best_effort_start<P>(target_id: CanisterId, should_retry: &mut P) -> Result<(), RetryError>
+async fn bounded_wait_start<P>(target_id: CanisterId, stop_trying: &mut P) -> Result<(), RetryError>
 where
     P: FnMut() -> bool,
 {
@@ -253,7 +261,7 @@ where
     };
     Ok(call_idempotent_method_with_retry(
         Call::bounded_wait(Principal::management_canister(), "start_canister").with_arg(&args),
-        should_retry,
+        stop_trying,
     )
     .await?
     .candid()
@@ -261,10 +269,10 @@ where
 }
 
 /// Retrieve canister info (including module hash) with best-effort calls.
-async fn best_effort_canister_info<P>(
+async fn bounded_wait_canister_info<P>(
     target_id: CanisterId,
     num_requested_changes: Option<u64>,
-    should_retry: &mut P,
+    stop_trying: &mut P,
 ) -> Result<CanisterInfoResult, RetryError>
 where
     P: FnMut() -> bool,
@@ -276,7 +284,7 @@ where
 
     Ok(call_idempotent_method_with_retry(
         Call::bounded_wait(Principal::management_canister(), "canister_info").with_arg(&arg),
-        should_retry,
+        stop_trying,
     )
     .await?
     .candid()
@@ -286,11 +294,11 @@ where
 /// Install a small (<2MB) WASM in a single call via `install_code`.
 /// Since code installation isn't idempotent, we don't just retry on `SysUnknown`.
 /// Rather, we leave it up to the caller to handle.
-async fn best_effort_install_single_chunk<P>(
+async fn bounded_wait_install_single_chunk<P>(
     target_id: CanisterId,
     wasm_bytes: &[u8],
     arg: &[u8],
-    should_retry: &mut P,
+    stop_trying: &mut P,
 ) -> Result<(), RetryError>
 where
     P: FnMut() -> bool,
@@ -305,7 +313,7 @@ where
     Ok(call_nonidempotent_method_with_retry(
         Call::bounded_wait(Principal::management_canister(), "install_code")
             .with_arg(&install_args),
-        should_retry,
+        stop_trying,
     )
     .await?
     .candid()
@@ -349,11 +357,11 @@ async fn upload_chunks(
 
 /// Install a large (>2MB) WASM by referencing pre-uploaded chunks, via `install_chunked_code`.
 /// Chunks are assumed to already have been uploaded
-async fn best_effort_install_chunked<P>(
+async fn bounded_wait_install_chunked<P>(
     target_id: CanisterId,
     chunked: &ChunkedModule,
     arg: &[u8],
-    should_retry: &mut P,
+    stop_trying: &mut P,
 ) -> Result<(), RetryError>
 where
     P: FnMut() -> bool,
@@ -373,6 +381,6 @@ where
 
     let install_call = Call::bounded_wait(Principal::management_canister(), "install_chunked_code")
         .with_arg(&install_args);
-    let res = call_nonidempotent_method_with_retry(install_call, should_retry).await?;
+    let res = call_nonidempotent_method_with_retry(install_call, stop_trying).await?;
     Ok(res.candid().unwrap())
 }
