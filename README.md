@@ -23,17 +23,3 @@ ic-call-chaos = { path = "path/to/ic_call_utils/call_chaos" }
 ic-call-retry = { path = "path/to/ic_call_utils/retry" }
 ic-safe-upgrades = { path = "path/to/ic_call_utils/safe_upgrade" }
 ```
-
-## Development
-
-This is a Rust workspace containing multiple crates. To build all crates:
-
-```bash
-cargo build
-```
-
-To run tests:
-
-```bash
-cargo test
-``` 
