@@ -815,7 +815,7 @@ dependencies = [
 
 [[package]]
 name = "ic-call-chaos"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "candid",
  "futures",
@@ -827,7 +827,7 @@ dependencies = [
 
 [[package]]
 name = "ic-call-retry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ic-call-chaos",
  "ic-cdk",
@@ -921,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "ic-safe-upgrades"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "candid",
  "ic-call-chaos",
