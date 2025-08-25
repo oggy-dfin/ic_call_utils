@@ -16,3 +16,6 @@ ic-safe-upgrades = { path = "../../safe_upgrades", features = [
 ic-call-retry = { path = "../../../retry/retry", features = [
     "use_call_chaos",
 ] }
+
+[package.metadata.release]
+release = false

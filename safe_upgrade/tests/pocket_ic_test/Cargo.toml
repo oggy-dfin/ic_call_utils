@@ -11,3 +11,6 @@ candid = { workspace = true }
 pocket-ic = "8.0.0"
 once_cell = "1.21.3"
 pocket-ic-utils = { path = "../../../pocket_ic_utils" }
+
+[package.metadata.release]
+release = false

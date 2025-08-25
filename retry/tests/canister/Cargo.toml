@@ -13,3 +13,6 @@ candid = { workspace = true }
 ic-call-retry = { path = "../../retry", features = ["use_call_chaos"] }
 ic-call-chaos = { path = "../../../call_chaos/call_chaos" }
 lazy_static = "1.5.0"
+
+[package.metadata.release]
+release = false

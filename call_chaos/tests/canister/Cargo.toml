@@ -14,3 +14,6 @@ use_call_chaos = ["dep:ic-call-chaos"]
 ic-cdk = { workspace = true }
 candid = { workspace = true }
 ic-call-chaos = { path = "../../call_chaos", optional = true }
+
+[package.metadata.release]
+release = false
